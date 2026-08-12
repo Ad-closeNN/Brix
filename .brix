@@ -1,0 +1,33 @@
+{
+  "name": "0.0.1-Brix",
+  "version": "0.1.0",
+  "entry": "index.html",
+  "window": {
+    "width": 1000,
+    "height": 700
+  },
+  "include": [
+    "bin/**/*",
+    "branding/**/*",
+    "scripts/**/*",
+    "src/**/*",
+    "Documentation.md",
+    "icon.ico",
+    "LICENSE",
+    "package-lock.json",
+    "package.json",
+    "README.md",
+    "syntax.md"
+  ],
+  "exclude": [
+    "node_modules",
+    ".git",
+    "Brix_Works",
+    "BRIX-APP",
+    "*.exe",
+    "*.log",
+    "*.WebView2",
+    "temp_*.zip"
+  ],
+  "icon": "icon.ico"
+}

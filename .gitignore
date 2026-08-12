@@ -1,0 +1,26 @@
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Rust (Stub)
+src/stub/target/
+
+# Brix Build Artifacts
+BRIX-APP/
+Brix_Works/
+*.zip
+!branding/*.svg
+
+# Windows / WebView2 Caches
+.WebView2/
+EBWebView/
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local

@@ -1,0 +1,53 @@
+{
+  "name": "brixpack",
+  "version": "0.1.0",
+  "description": "Zero-SDK CLI to transform web projects into lightweight standalone Windows applications (Windows-only runtime; build from any OS).",
+  "main": "src/cli.js",
+  "bin": {
+    "brix": "src/cli.js",
+    "brixpack": "src/cli.js"
+  },
+  "scripts": {
+    "build": "node src/cli.js build",
+    "test": "cargo test --manifest-path src/stub/Cargo.toml",
+    "prepublishOnly": "node scripts/check-stub.js"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "src/",
+    "bin/stub.exe",
+    "branding/",
+    "package.json",
+    "README.md",
+    "Documentation.md",
+    "syntax.md",
+    "LICENSE",
+    "icon.ico"
+  ],
+  "author": {
+    "name": "HaadiAli",
+    "url": "https://github.com/haadiali242"
+  },
+  "homepage": "https://brix.hadesworld.com",
+  "license": "MIT",
+  "keywords": [
+    "desktop-app",
+    "webview2",
+    "packaging",
+    "cli",
+    "bundler",
+    "lightweight",
+    "brix",
+    "hadesworld"
+  ],
+  "dependencies": {
+    "archiver": "^7.0.1",
+    "chalk": "^4.1.2",
+    "commander": "^12.0.0",
+    "fs-extra": "^11.2.0",
+    "glob": "^10.3.12",
+    "resedit": "^1.7.1"
+  }
+}

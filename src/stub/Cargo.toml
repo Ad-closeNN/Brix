@@ -1,0 +1,40 @@
+[package]
+name = "brix-stub"
+version = "0.0.1"
+edition = "2021"
+
+[dependencies]
+wry = "0.47"
+tao = "0.31"
+zip = "2.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+ico = "0.3"
+image = { version = "0.24", default-features = false, features = ["png"] }
+thiserror = "1.0"
+url = "2.5"
+percent-encoding = "2.3"
+rfd = { version = "0.15", default-features = false }
+tray-icon = "0.20"
+base64 = "0.22"
+sha2 = "0.10"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+  "Win32_Security",
+  "Win32_System_DataExchange",
+  "Win32_System_Memory",
+  "Win32_Networking_WinHttp",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging"
+] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
