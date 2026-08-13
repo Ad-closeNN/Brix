@@ -1,38 +1,39 @@
-# Brix JSON Syntax Reference
+# Brix Syntax Reference
 
 Two JSON files drive a Brix project:
 
-1. **`.brix`** — the app config (created by `brix init <project>`, edited by
-   you, consumed by `brix build`).
-2. **`installer/installer.json`** — the installer config (created by
-   `brix init installer`, edited by you, consumed by `brix make`).
+1. **`.brix`** — the app configuration file.
+2. **`installer/installer.json`** — the installer configuration file.
 
 ---
 
-## 1. `.brix` — the app config
+## 1. `.brix` — The App Configuration
 
+The `.brix` file configures your application's bundle and runtime behavior.
+
+### 🌟 Core Properties
 | Key | Type | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `name` | string | — | **Required.** App name: window title, exe filename, WebView2 data folder, file metadata. Max 60 chars. |
-| `version` | string | `"1.0.0"` | Written into the exe metadata as `x.y.z.w` (`"1.2.3"` → `1.2.3.0`). |
-| `entry` | string | — | **Required.** Path to the main HTML document, relative to the project root (backslashes fine). Must stay inside the project. |
-| `icon` | string | package `icon.ico` | Path to an `.ico` file — injected into the exe (taskbar/window icon). Non-`.ico` warns. |
-| `window.width` / `window.height` | int | `1000` / `700` | Initial window size in logical pixels (positive). |
-| `windows` | object[] | `[]` | Extra windows opened at startup: `{ title, width, height, url }` (all optional; `url` may be relative to the entry page or absolute). |
-| `include` | string[] | `["./**/*"]` | Glob patterns for files bundled into the exe. `brix init` lists every folder and root file here — add new files by appending. Patterns escaping the project are skipped with a warning. |
-| `exclude` | string[] | (built-in defaults) | Glob patterns excluded **in addition to** the always-on defaults (`node_modules`, `.git`, `BRIX-APP`, `Brix_Works`, `.brix`, `*.exe`, `*.log`, `*.WebView2`, `temp_*.zip`). A pattern without glob magic (e.g. `node_modules`) excludes everything below it too; basename patterns (`*.exe`) match at every depth. |
-| `backend` | object | — | Sidecar process (see below). |
-| `splash` | object | enabled | Branded boot window: `{ enabled, width, height, background, image, text, autoHide }`. |
-| `tray` | bool \| object | `false` | System-tray icon: `true` = Show/Exit menu; object = `{ icon, tooltip, menu: [{ label, id?, enabled?, checked?, separator? }] }`. `id: "show"` / `id: "exit"` are built-in; any other id fires a `tray_menu` event. |
-| `minimizeToTray` | bool | `false` | Close button hides to tray instead of quitting. |
-| `devtools` | bool | `false` | Enable WebView2 dev tools in the packaged app. |
-| `webview2` | object | — | `{ fixedRuntimePath: "C:\\WebView2\\runtime" }` for offline environments. |
-| `update` | object | — | Auto-update: `{ url, checkOnStart, autoInstall }` (manifest: `{ version, url, notes }`). |
-| `sign` | object | — | Code signing: `{ enabled, certFile, certPassword, timestamp, algorithm }` or `{ command: ["signtool", "sign", ...] }`. |
-| `plugins` | string[] | — | Build-time plugin packages with `preBundle` / `transformFile` / `postBuild` hooks. |
+|---|---|---|---|
+| `name` | string | — | **Required.** App name used for the window title, `.exe` filename, and file metadata. |
+| `version` | string | `"1.0.0"` | Written into the exe's file metadata. |
+| `entry` | string | — | **Required.** Path to the main HTML document, relative to the project root. |
+| `icon` | string | `icon.ico` | Path to a `.ico` file. Injected into the exe resource. |
 
-### `backend` — sidecars & server mode
+### 📦 Bundling & Files
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `include` | string[] | `["./**/*"]` | Glob patterns for files bundled into the app. |
+| `exclude` | string[] | (built-in) | Extra glob patterns excluded in addition to defaults like `node_modules` and `.git`. |
+| `plugins` | string[] | — | Build-time plugin packages. Hooks: `preBundle`, `transformFile`, `postBuild`. |
 
+### 🪟 Window Settings
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `window.width` / `height` | int | `1000` / `700` | Initial window size in logical pixels. |
+| `windows` | object[] | `[]` | Extra windows opened at startup: `{ title, width, height, url }`. |
+| `minimizeToTray` | bool | `false` | The close button hides the window to the tray instead of quitting. |
+
+### 🚀 Backend & Sidecars
 ```json
 "backend": {
   "command": "node",
@@ -41,98 +42,35 @@ Two JSON files drive a Brix project:
   "port": 4567
 }
 ```
+- **With `port` (Server mode):** The whole bundle extracts to `%TEMP%\brix_<name>`. The backend spawns there, and the app loads `http://127.0.0.1:<port>/`.
+- **Without `port` (Bundled mode):** The backend runs as a hidden sidecar next to the app. The app loads its bundled assets over `brix://`.
 
-- **Without `port`** the backend runs as a hidden sidecar next to the app;
-  the app loads its bundled assets over `brix://`.
-- **With `port`** (server mode) the whole bundle is extracted to
-  `%TEMP%\brix_<name>`, the backend is spawned there, and the app loads
-  `http://127.0.0.1:<port>/`. Set the port to the one your server actually
-  listens on.
-
-### Example `.brix` (as generated by `brix init`)
-
-```json
-{
-  "name": "my-app",
-  "version": "0.1.0",
-  "entry": "index.html",
-  "icon": "favicon.ico",
-  "window": { "width": 1000, "height": 700 },
-  "include": [
-    "index.html",
-    "server.js",
-    "assets/**/*",
-    "src/**/*",
-    "public/**/*"
-  ],
-  "exclude": [
-    "node_modules",
-    ".git",
-    "Brix_Works",
-    "BRIX-APP",
-    "*.exe",
-    "*.log",
-    "*.WebView2",
-    "temp_*.zip"
-  ],
-  "backend": {
-    "command": "node",
-    "args": ["server.js"],
-    "files": ["server.js"]
-  }
-}
-```
+### 🎨 Splash Screen & Tray
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `splash.enabled` | bool | `true` | Show a branded splash window while the app boots. |
+| `splash.background` | string | gradient | CSS background of the splash window. |
+| `splash.image` | string | — | Path to a PNG shown in the center of the splash window. |
+| `tray` | bool\|object | `false` | System-tray icon. Object takes `{ icon, tooltip, menu: [...] }`. |
 
 ---
 
-## 2. `installer/installer.json` — the installer config
+## 2. `installer/installer.json` — The Installer Config
 
-Created by `brix init installer` (pick a type and which folders/files to
-ship). Every key is editable; re-run `brix make` after editing.
+Generated via `brixpack init installer`. Re-run `brixpack make` after editing.
 
+### Installer Properties
 | Key | Type | Description |
-| :--- | :--- | :--- |
-| `type` | `"zip"` \| `"inno"` \| `"nsis"` \| `"msi"` | Installer format. |
-| `appName` | string | Application name (start menu / shortcuts / registry). |
-| `appVersion` | string | Version shown by the installer (Inno/NSIS) or written to the MSI. |
-| `outBase` | string | Output filename base, e.g. `"my-app-setup"`. |
-| `outputDir` | string | Where the installer lands (relative to the project root), e.g. `"installer/dist"`. |
-| `files` | object[] | Everything installed, one entry per file. |
-| `files[].path` | string | Project-relative source path. |
-| `files[].role` | `"exe"` \| `"extra"` | The app exe vs. supporting files. The exe is always installed. |
-| `files[].subDir` | string | **Destination subfolder** inside the install directory — edit this to move files around, e.g. `"assets/images"`. |
-| `exeName` | string | Project-relative path of the app exe. |
-| `icon` | string | Setup/start-menu icon (project-relative `.ico`). |
-| `upgradeGuid` | string | (msi only) Stable UpgradeCode — kept from the first `make msi` so upgrades replace previous installs. |
+|---|---|---|
+| `type` | string | `"zip"`, `"inno"`, `"nsis"`, or `"msi"`. |
+| `appName` | string | Application name for shortcuts and registry. |
+| `appVersion` | string | Version shown by the installer. |
+| `outBase` | string | Output filename base (e.g. `my-app-setup`). |
+| `outputDir` | string | Where the installer lands (e.g. `installer/dist`). |
+| `files` | object[] | Everything installed. Defines `path`, `role`, and `subDir`. |
 
-### Example `installer/installer.json`
-
-```json
-{
-  "type": "inno",
-  "appName": "My App",
-  "appVersion": "1.2.3",
-  "outBase": "my-app-setup",
-  "outputDir": "installer/dist",
-  "files": [
-    { "path": "Brix_Works/My App.exe", "role": "exe", "subDir": "" },
-    { "path": "index.html", "role": "extra", "subDir": "" },
-    { "path": "assets/logo.png", "role": "extra", "subDir": "assets" }
-  ],
-  "exeName": "Brix_Works/My App.exe",
-  "icon": "icon.ico"
-}
-```
-
-### What each type produces
-
-| Type | Output | External tool |
-| :--- | :--- | :--- |
-| `zip` | `installer/dist/<outBase>-portable.zip` (exe + files, folder structure kept) | none |
-| `inno` | `<outBase>.exe` — Inno Setup 6 | `iscc` in PATH or default install |
-| `nsis` | `<outBase>.exe` — NSIS 3 | `makensis` in PATH or default install |
-| `msi` | `<outBase>.msi` — WiX v3/v4 | `candle` + `light`, or the `wix` CLI |
-
-`subDir` is honored everywhere: the portable zip keeps the structure, Inno
-uses `DestDir: {app}\<subDir>`, NSIS uses `/oname=<subDir>/<file>`, and MSI
-gets real nested `<Directory>` elements.
+### Installer Types Output
+- **zip:** Portable folder zip (`<outBase>-portable.zip`).
+- **inno:** Inno Setup 6 (`<outBase>.exe`).
+- **nsis:** NSIS 3 (`<outBase>.exe`).
+- **msi:** WiX v3/v4 (`<outBase>.msi`).

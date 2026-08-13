@@ -768,9 +768,9 @@ program
               vi.setFileVersion(version[0], version[1], version[2], version[3], 1033);
               vi.setProductVersion(version[0], version[1], version[2], version[3], 1033);
               vi.setStringValues({ lang: 1033, codepage: 1200 }, {
-                  CompanyName: 'HadesWorld',
+                  CompanyName: 'HaadiAli',
                   FileDescription: config.name,
-                  LegalCopyright: `© ${new Date().getFullYear()} Copyright HaadiAli, HadesWorld`,
+                  LegalCopyright: `© ${new Date().getFullYear()} HaadiAli (https://github.com/haadiali242)`,
                   ProductName: config.name,
               });
               vi.outputToResourceEntries(res.entries);

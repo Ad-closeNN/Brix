@@ -1,5 +1,5 @@
 {
-  "name": "0.0.1-Brix",
+  "name": "Brix",
   "version": "0.1.0",
   "entry": "index.html",
   "window": {
@@ -17,7 +17,8 @@
     "package-lock.json",
     "package.json",
     "README.md",
-    "syntax.md"
+    "syntax.md",
+    "index.html"
   ],
   "exclude": [
     "node_modules",
@@ -27,7 +28,11 @@
     "*.exe",
     "*.log",
     "*.WebView2",
-    "temp_*.zip"
+    "temp_*.zip",
+    "src/stub/target/**/*"
   ],
-  "icon": "icon.ico"
+  "icon": "icon.ico",
+  "splash": {
+    "background": "linear-gradient(135deg, #6B3A11, #D6BB70)"
+  }
 }
