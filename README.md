@@ -52,7 +52,7 @@ Just two commands — Brix stages, bundles, brands, and stitches everything for 
 
 ### 1. Install (once)
 ```bash
-npm install -g brixpack
+npm install -g brixpackager
 ```
 
 ### 2. Build
@@ -90,7 +90,7 @@ Explore the full potential of Brix, including window customization and deep fram
 
 Brix is created by a solo developer, **HaadiAli**, building this for fun and optimized for the modern web.
 
-[GitHub](https://github.com/haadiali242/Brix) · [NPM Registry](https://www.npmjs.com/package/brixpack)
+[GitHub](https://github.com/haadiali242/Brix) · [NPM Registry](https://www.npmjs.com/package/brixpackager)
 
 <p align="right">
   <i>© 2026 HaadiAli (https://github.com/haadiali242)</i>

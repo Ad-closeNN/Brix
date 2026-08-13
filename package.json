@@ -1,5 +1,5 @@
 {
-  "name": "brixpack",
+  "name": "brixpackager",
   "version": "0.1.0",
   "description": "Brix is a lightweight CLI tool that packages web apps into standalone Windows executables using native WebView2. Features include custom protocol asset serving, embedded backend support, SHA-256 verification, and installer generation.",
   "main": "src/cli.js",
