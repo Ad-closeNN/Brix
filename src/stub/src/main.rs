@@ -1441,8 +1441,7 @@ fn handle_ipc(
                 // Security: validate args size (prevent OOM / huge payloads)
                 let arg_bytes: usize = args.to_string().bytes().count();
                 if arg_bytes > 65536 {
-                    respond_err(id, "method args too large".into());
-                    return;
+                    return respond_err(id, "method args too large".into());
                 }
                 if let Ok(mut pending) = ext.pending.lock() {
                     pending.insert(id, *window_id);
