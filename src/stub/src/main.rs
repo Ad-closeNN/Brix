@@ -384,36 +384,6 @@ fn sanitize_folder_name(name: &str) -> String {
         .collect()
 }
 
-/// Polls a TCP address until it accepts connections (server-mode startup wait).
-/// Synchronous port wait: blocks until the address is reachable (legacy, unused).
-#[allow(dead_code)]
-fn wait_for_port(addr: &str) {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
-    while std::time::Instant::now() < deadline {
-        if std::net::TcpStream::connect(addr).is_ok() {
-            return;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(300));
-    }
-}
-
-/// Async port wait: spawns a thread to poll the address, sends BackendReady event when done (legacy, unused).
-#[allow(dead_code)]
-fn wait_for_port_async(addr: String, proxy: EventLoopProxy<UserEvent>) {
-    std::thread::spawn(move || {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
-        while std::time::Instant::now() < deadline {
-            if std::net::TcpStream::connect(&addr).is_ok() {
-                let _ = proxy.send_event(UserEvent::BackendReady);
-                return;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(300));
-        }
-        // Timeout: still send event to unblock UI (will show error on navigate)
-        let _ = proxy.send_event(UserEvent::BackendReady);
-    });
-}
-
 /// FNV-1a 64-bit hash used to fingerprint the bundle for the extraction cache.
 fn hash64(data: &[u8]) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
@@ -2016,8 +1986,9 @@ fn run(verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
         );
         entry_url = format!("brix://app/{}", entry_path_str);
     } else {
-        // Placeholder: will be set after port wait completes
-        entry_url = String::new();
+        // Server mode with fixed port: show loading.html immediately while backend starts.
+        // final_backend_port is set here so the navigation handler knows 127.0.0.1 is internal.
+        entry_url = format!("brix://app/{}", entry_path_str);
     }
 
     // Dev mode: load an external dev-server URL instead of the bundle. The
@@ -2039,6 +2010,15 @@ fn run(verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
     let event_loop: EventLoop<UserEvent> =
         tao::event_loop::EventLoopBuilder::with_user_event().build();
     let proxy: EventLoopProxy<UserEvent> = event_loop.create_proxy();
+
+    // Pre-set final_backend_port so the navigation handler treats 127.0.0.1 as internal.
+    // Without this, is_external_url returns true for localhost when backend_port is None,
+    // causing window.location.href navigation to open in the system browser instead.
+    if let Some(port) = resolved_port {
+        if port != 0 {
+            final_backend_port = Some(port);
+        }
+    }
 
     // Start async port wait AFTER EventLoop creation (if backend mode with fixed port)
     let mut extension_runtime: Option<std::sync::Arc<ExtensionRuntime>> = None;
