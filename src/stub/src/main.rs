@@ -2729,8 +2729,10 @@ fn run(verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
                             opts_mut.final_backend_port = Some(p);
                         }
 
-                        // Navigate main window to backend URL
-                        let _ = webview_for_loop.load_url(&new_entry_url);
+                        // Navigate main window via JS — wry's WebView has no public load_url;
+                        // evaluate_script with location.href is the reliable cross-platform path.
+                        let js = format!("window.location.href = {:?};", new_entry_url);
+                        let _ = webview_for_loop.evaluate_script(&js);
                         verbose_log(verbose_for_loop, &data_dir_for_loop, &format!("nav: {} external=false", new_entry_url));
                     } else {
                         verbose_log(verbose_for_loop, &data_dir_for_loop, "backend: port not available, keeping splash");
