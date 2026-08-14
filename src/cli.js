@@ -78,6 +78,26 @@ function isUnsafePath(p) {
 }
 
 /**
+ * Normalizes the `font` config for the runtime.
+ *
+ * Bundled stylesheet paths are rewritten to `brix://app/...` so the stub serves
+ * them from the bundle; absolute URLs (http/https/file) and already-`brix://`
+ * entries pass through untouched. Authors write ordinary relative paths and get
+ * working URLs without knowing the protocol scheme.
+ */
+function normalizeFontConfig(font) {
+  const out = { ...font };
+  if (Array.isArray(font.stylesheets)) {
+    out.stylesheets = font.stylesheets.map((sheet) => {
+      if (/^(https?:|file:|brix:|\/\/)/i.test(sheet)) return sheet;
+      const rel = toForwardSlashes(sheet).replace(/^(\.\/|\/)/, '');
+      return `brix://app/${rel}`;
+    });
+  }
+  return out;
+}
+
+/**
  * Sanitizes a name into a safe Windows filename (original case preserved).
  * Removes invalid chars, collapses whitespace, preserves case.
  */
@@ -199,6 +219,55 @@ async function validateConfig(config, configPath) {
         }
         if (config.splash.height !== undefined && !(Number.isInteger(config.splash.height) && config.splash.height > 0)) {
             throw new Error('"splash.height" must be a positive integer');
+        }
+    }
+
+    if (config.font !== undefined) {
+        if (typeof config.font !== 'object' || Array.isArray(config.font)) {
+            throw new Error('"font" must be an object');
+        }
+        // family / codeFamily accept a single name or a list of names.
+        for (const key of ['family', 'codeFamily']) {
+            const value = config.font[key];
+            if (value === undefined) continue;
+            const ok = typeof value === 'string'
+                || (Array.isArray(value) && value.every((v) => typeof v === 'string'));
+            if (!ok) {
+                throw new Error(`"font.${key}" must be a string or an array of strings`);
+            }
+        }
+        if (config.font.stylesheets !== undefined) {
+            if (!Array.isArray(config.font.stylesheets)
+                || !config.font.stylesheets.every((s) => typeof s === 'string' && s)) {
+                throw new Error('"font.stylesheets" must be an array of non-empty strings');
+            }
+            // Bundled sheets must ship with the app, so verify they exist now
+            // rather than failing silently at runtime.
+            for (const sheet of config.font.stylesheets) {
+                if (/^(https?:|file:|brix:|\/\/)/i.test(sheet)) continue;
+                if (isUnsafePath(sheet)) {
+                    throw new Error(`"font.stylesheets" entry must stay inside the project folder: ${sheet}`);
+                }
+                const sheetPath = path.resolve(root, toForwardSlashes(sheet));
+                if (!(await fs.pathExists(sheetPath))) {
+                    throw new Error(`Font stylesheet not found: ${sheet}`);
+                }
+            }
+        }
+        if (config.font.applyToRoot !== undefined && typeof config.font.applyToRoot !== 'boolean') {
+            throw new Error('"font.applyToRoot" must be a boolean');
+        }
+        if (config.font.variables !== undefined) {
+            if (typeof config.font.variables !== 'object' || Array.isArray(config.font.variables)) {
+                throw new Error('"font.variables" must be an object with { body?, code? }');
+            }
+            for (const key of ['body', 'code']) {
+                const value = config.font.variables[key];
+                if (value === undefined) continue;
+                if (!Array.isArray(value) || !value.every((v) => typeof v === 'string' && v.startsWith('--'))) {
+                    throw new Error(`"font.variables.${key}" must be an array of CSS custom property names (starting with --)`);
+                }
+            }
         }
     }
 
@@ -656,6 +725,7 @@ program
           minimizeToTray: config.minimizeToTray === true,
           devtools: config.devtools === true,
           splash: config.splash === undefined ? undefined : config.splash,
+          font: config.font === undefined ? undefined : normalizeFontConfig(config.font),
           webview2: config.webview2 === undefined ? undefined : config.webview2,
           update: config.update === undefined ? undefined : config.update,
           windows: config.windows === undefined ? undefined : config.windows

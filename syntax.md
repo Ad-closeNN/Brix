@@ -53,6 +53,55 @@ The `.brix` file configures your application's bundle and runtime behavior.
 | `splash.image` | string | — | Path to a PNG shown in the center of the splash window. |
 | `tray` | bool\|object | `false` | System-tray icon. Object takes `{ icon, tooltip, menu: [...] }`. |
 
+### 🔤 Fonts
+
+Restyles the loaded page — including a backend UI you don't own — without patching its assets.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `font.family` | string\|string[] | — | Families **prepended** to the body font stack. |
+| `font.codeFamily` | string\|string[] | — | Families prepended to the monospace stack. |
+| `font.stylesheets` | string[] | `[]` | Stylesheets loaded first (for `@font-face`). Bundled paths, `https://` URLs, or `file:` paths. |
+| `font.variables` | object | (see below) | Which CSS custom properties to write. `{ body: [...], code: [...] }` |
+| `font.applyToRoot` | bool | `true` | Also set `font-family` on `html`/`body` for UIs that hardcode families. |
+
+**System fonts** — nothing to bundle, no stylesheet needed:
+```json
+"font": { "family": "MiSans" }
+```
+
+**Webfonts** — bundle the files and point at the stylesheet:
+```json
+"font": {
+  "family": ["MiSans", "misans-web-vf-font"],
+  "codeFamily": ["Cascadia Code", "JetBrains Mono"],
+  "stylesheets": ["fonts/misans-web-vf-font/MiSans.min.css"]
+}
+```
+Remember to bundle the files themselves: `"include": ["index.html", "fonts/**/*"]`.
+
+**Remote fonts** — any absolute URL works:
+```json
+"font": {
+  "family": "Inter",
+  "stylesheets": ["https://fonts.example.com/inter.css"]
+}
+```
+
+Listing a system name *and* a webfont name (as above) is the robust pattern: the
+installed copy is used when present, the bundled one loads otherwise.
+
+Families are **prepended, never replaced** — the page's own stack stays as the
+fallback, so text still renders if a custom font is missing. Bundled stylesheets
+are rewritten to `brix://app/...` at build time and served with
+`Access-Control-Allow-Origin: *`, which is required because fonts are always
+fetched in CORS mode and in server mode the page origin is the backend.
+
+Default `font.variables` cover the common conventions:
+`body` → `--dsw-font-family`, `--ds-font-family`;
+`code` → `--ds-font-family-code`, `--dsw-font-family-code`.
+Override it when the target UI uses different names.
+
 ---
 
 ## 2. `installer/installer.json` — The Installer Config

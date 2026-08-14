@@ -41,6 +41,10 @@ struct BrixConfig {
     devtools: bool,
     #[serde(default)]
     splash: Option<SplashSettings>,
+    /// Optional font override injected into every page. Lets a packaged app
+    /// restyle a backend UI it doesn't own, without patching that UI's assets.
+    #[serde(default)]
+    font: Option<FontSettings>,
     #[serde(default)]
     webview2: Option<WebView2Settings>,
     #[serde(default)]
@@ -112,6 +116,142 @@ struct SplashSettings {
     text: Option<String>,
     #[serde(default = "default_true", rename = "autoHide")]
     auto_hide: bool,
+}
+
+/// Font override applied to every page the app loads.
+///
+/// Both sources can be combined: `stylesheets` pulls in @font-face definitions
+/// (bundled `brix://` paths, `http(s)://` URLs, or absolute local paths), while
+/// `family` / `codeFamily` name the families to put at the head of the stack.
+/// Families are prepended, never replaced, so the page keeps its own fallbacks
+/// if a custom font is missing or fails to load.
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+struct FontSettings {
+    /// Families to prepend to the body font stack. Accepts a single string
+    /// ("MiSans") or a list (["MiSans", "Noto Sans SC"]).
+    #[serde(default)]
+    family: FontFamilyList,
+    /// Families to prepend to the monospace/code font stack.
+    #[serde(default, rename = "codeFamily")]
+    code_family: FontFamilyList,
+    /// Stylesheets to load before applying the families. Use for @font-face
+    /// (webfonts); omit when the fonts are already installed system-wide.
+    #[serde(default)]
+    stylesheets: Vec<String>,
+    /// CSS custom properties to override, mapped to which stack they belong to.
+    /// Defaults cover the common `--*-font-family` conventions; set this when a
+    /// UI uses different variable names.
+    #[serde(default)]
+    variables: Option<FontVariables>,
+    /// Also set `font-family` directly on html/body. Helps when a UI hardcodes
+    /// families instead of reading them from custom properties.
+    #[serde(default = "default_true", rename = "applyToRoot")]
+    apply_to_root: bool,
+}
+
+/// CSS custom properties the font override writes to.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct FontVariables {
+    /// Variables receiving the body font stack.
+    #[serde(default = "default_body_vars")]
+    body: Vec<String>,
+    /// Variables receiving the monospace font stack.
+    #[serde(default = "default_code_vars")]
+    code: Vec<String>,
+}
+
+impl Default for FontVariables {
+    fn default() -> Self {
+        FontVariables {
+            body: default_body_vars(),
+            code: default_code_vars(),
+        }
+    }
+}
+
+fn default_body_vars() -> Vec<String> {
+    vec!["--dsw-font-family".into(), "--ds-font-family".into()]
+}
+
+fn default_code_vars() -> Vec<String> {
+    vec!["--ds-font-family-code".into(), "--dsw-font-family-code".into()]
+}
+
+/// One or many font families. Accepts `"MiSans"` or `["MiSans", "Noto Sans SC"]`
+/// so simple configs stay simple.
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(untagged)]
+enum FontFamilyList {
+    #[default]
+    None,
+    One(String),
+    Many(Vec<String>),
+}
+
+impl FontFamilyList {
+    fn is_empty(&self) -> bool {
+        match self {
+            FontFamilyList::None => true,
+            FontFamilyList::One(s) => s.trim().is_empty(),
+            FontFamilyList::Many(v) => v.iter().all(|s| s.trim().is_empty()),
+        }
+    }
+
+    /// Renders the families as a CSS font-family prefix, quoting any name that
+    /// isn't already quoted and isn't a bare CSS keyword.
+    fn to_css_prefix(&self) -> String {
+        let names: Vec<&str> = match self {
+            FontFamilyList::None => Vec::new(),
+            FontFamilyList::One(s) => vec![s.as_str()],
+            FontFamilyList::Many(v) => v.iter().map(|s| s.as_str()).collect(),
+        };
+        names
+            .into_iter()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(quote_font_family)
+            .collect::<Vec<String>>()
+            .join(", ")
+    }
+}
+
+/// CSS generic families that must stay unquoted to keep their meaning.
+const CSS_GENERIC_FAMILIES: &[&str] = &[
+    "serif",
+    "sans-serif",
+    "monospace",
+    "cursive",
+    "fantasy",
+    "system-ui",
+    "ui-serif",
+    "ui-sans-serif",
+    "ui-monospace",
+    "ui-rounded",
+    "math",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset",
+];
+
+/// Quotes a font family name unless it is already quoted or is a CSS keyword.
+fn quote_font_family(name: &str) -> String {
+    let already_quoted = (name.starts_with('"') && name.ends_with('"') && name.len() >= 2)
+        || (name.starts_with('\'') && name.ends_with('\'') && name.len() >= 2);
+    if already_quoted {
+        return name.to_string();
+    }
+    if CSS_GENERIC_FAMILIES
+        .iter()
+        .any(|g| g.eq_ignore_ascii_case(name))
+    {
+        return name.to_string();
+    }
+    // Escape embedded quotes/backslashes so a stray character can't break out
+    // of the CSS string.
+    let escaped = name.replace('\\', "\\\\").replace('"', "\\\"");
+    format!("\"{}\"", escaped)
 }
 
 fn default_true() -> bool {
@@ -985,6 +1125,8 @@ struct WindowOpts {
     update_state: std::sync::Arc<std::sync::Mutex<UpdateState>>,
     proxy: tao::event_loop::EventLoopProxy<UserEvent>,
     extension: Option<std::sync::Arc<ExtensionRuntime>>,
+    /// Pre-rendered font-override script, injected into every page.
+    font_script: Option<String>,
 }
 
 /// Builds a webview for any window: the main window or a secondary one.
@@ -1011,9 +1153,16 @@ fn build_webview(
     let opts_for_page = opts.clone();
     let opts_for_proto = opts.clone();
 
-    let builder = WebViewBuilder::with_web_context(web_context)
+    let mut builder = WebViewBuilder::with_web_context(web_context)
         .with_devtools(opts.devtools)
-        .with_initialization_script(BRIDGE_JS)
+        .with_initialization_script(BRIDGE_JS);
+
+    // Font override runs after the bridge so it can rely on a settled document.
+    if let Some(script) = &opts.font_script {
+        builder = builder.with_initialization_script(script);
+    }
+
+    let builder = builder
         .with_ipc_handler(move |request| {
             let body = request.body();
             let response = handle_ipc(
@@ -1137,8 +1286,15 @@ fn build_webview(
                     } else {
                         Cow::Owned(bytes)
                     };
+                    // CORS: in server mode the page origin is the backend
+                    // (http://127.0.0.1:PORT), so bundled assets it pulls in —
+                    // stylesheets and the font files they reference — are
+                    // cross-origin. Fonts are fetched in CORS mode by spec and
+                    // would be blocked without this. The bundle is read-only
+                    // app content, so exposing it to the page is not a leak.
                     response_builder
                         .header("Content-Type", mime)
+                        .header("Access-Control-Allow-Origin", "*")
                         .body(body)
                         .unwrap()
                 }
@@ -1641,6 +1797,189 @@ fn is_external_url(url: &str, backend_port: Option<u16>) -> bool {
         }
         _ => true,
     }
+}
+
+/// Builds the font-override script for `font` in .brix, or `None` when nothing
+/// is configured.
+///
+/// Runs as an initialization script, so it lands before the page's own styles.
+/// The generated style element is appended last and prepends families rather
+/// than replacing them, so custom fonts win while the page's fallback chain
+/// stays intact. A MutationObserver re-appends it if the page later rewrites
+/// `<head>` (SPA hydration, dev-server HMR).
+fn build_font_script(font: &FontSettings) -> Option<String> {
+    let body_prefix = font.family.to_css_prefix();
+    let code_prefix = font.code_family.to_css_prefix();
+    let has_families = !font.family.is_empty() || !font.code_family.is_empty();
+
+    if font.stylesheets.is_empty() && !has_families {
+        return None;
+    }
+
+    let vars = font.variables.clone().unwrap_or_default();
+    let payload = serde_json::json!({
+        "stylesheets": font.stylesheets,
+        "bodyPrefix": body_prefix,
+        "codePrefix": code_prefix,
+        "bodyVars": vars.body,
+        "codeVars": vars.code,
+        "applyToRoot": font.apply_to_root,
+    });
+
+    Some(format!(
+        r#"
+(function () {{
+  if (window.__brixFontApplied) {{ return; }}
+  window.__brixFontApplied = true;
+
+  var cfg = {payload};
+  var STYLE_ID = '__brix-font-override';
+
+  function head() {{ return document.head || document.documentElement; }}
+
+  // Stylesheets first: @font-face must be known before the families are used.
+  (cfg.stylesheets || []).forEach(function (href, i) {{
+    if (!href) {{ return; }}
+    var id = STYLE_ID + '-sheet-' + i;
+    if (document.getElementById(id)) {{ return; }}
+    var link = document.createElement('link');
+    link.id = id;
+    link.rel = 'stylesheet';
+    link.href = href;
+    head().appendChild(link);
+  }});
+
+  // Reads what the page currently resolves a stack to, so the custom families
+  // can be prepended to it instead of replacing it. Called after the page's
+  // stylesheets are in place, otherwise there is nothing to read yet.
+  function currentValue(varName, fallback) {{
+    try {{
+      var v = getComputedStyle(document.documentElement)
+        .getPropertyValue(varName)
+        .trim();
+      return v || fallback;
+    }} catch (e) {{
+      return fallback;
+    }}
+  }}
+
+  function currentFontFamily(fallback) {{
+    try {{
+      var el = document.body || document.documentElement;
+      var v = getComputedStyle(el).fontFamily;
+      return (v && v.trim()) || fallback;
+    }} catch (e) {{
+      return fallback;
+    }}
+  }}
+
+  function buildCss() {{
+    var rules = [];
+    var rootDecls = [];
+
+    if (cfg.bodyPrefix) {{
+      (cfg.bodyVars || []).forEach(function (name) {{
+        var tail = currentValue(name, 'sans-serif');
+        rootDecls.push(name + ': ' + cfg.bodyPrefix + ', ' + tail);
+      }});
+    }}
+    if (cfg.codePrefix) {{
+      (cfg.codeVars || []).forEach(function (name) {{
+        var tail = currentValue(name, 'monospace');
+        rootDecls.push(name + ': ' + cfg.codePrefix + ', ' + tail);
+      }});
+    }}
+
+    if (rootDecls.length) {{
+      rules.push(':root {{ ' + rootDecls.join('; ') + '; }}');
+    }}
+
+    // Direct font-family for UIs that hardcode families instead of reading the
+    // custom properties. The page's resolved stack becomes the fallback tail.
+    if (cfg.applyToRoot && cfg.bodyPrefix) {{
+      var bodyTail = currentFontFamily('sans-serif');
+      rules.push('html, body {{ font-family: ' + cfg.bodyPrefix + ', ' + bodyTail + '; }}');
+    }}
+    if (cfg.applyToRoot && cfg.codePrefix) {{
+      rules.push('code, kbd, samp, pre {{ font-family: ' + cfg.codePrefix + ', monospace; }}');
+    }}
+
+    return rules.join('\n');
+  }}
+
+  // Rebuilt on each apply: the page's own values are only readable once its
+  // stylesheets have loaded, and our own rule is excluded while reading so the
+  // prefix can't accumulate.
+  function apply() {{
+    var existing = document.getElementById(STYLE_ID);
+    if (existing) {{
+      existing.textContent = '';
+    }}
+
+    var css = buildCss();
+    if (!css) {{ return; }}
+
+    if (existing) {{
+      existing.textContent = css;
+      // Keep it last so later-loaded page styles don't take precedence.
+      if (existing.parentNode && existing.parentNode.lastChild !== existing) {{
+        existing.parentNode.appendChild(existing);
+      }}
+      return;
+    }}
+
+    var style = document.createElement('style');
+    style.id = STYLE_ID;
+    style.textContent = css;
+    head().appendChild(style);
+  }}
+
+  // Guard against re-entry: apply() mutates <head>, which would otherwise
+  // retrigger the observer below in an endless loop.
+  var applying = false;
+  function safeApply() {{
+    if (applying) {{ return; }}
+    applying = true;
+    try {{ apply(); }} finally {{
+      // Release after the current task so our own mutation records are drained
+      // before another apply can be scheduled.
+      setTimeout(function () {{ applying = false; }}, 0);
+    }}
+  }}
+
+  safeApply();
+
+  if (document.readyState === 'loading') {{
+    document.addEventListener('DOMContentLoaded', safeApply, {{ once: true }});
+  }}
+  // Page stylesheets are guaranteed resolved by load, so the fallback tail read
+  // here is the accurate one.
+  window.addEventListener('load', safeApply, {{ once: true }});
+
+  // Frameworks can replace <head> during hydration; re-assert then.
+  try {{
+    var obs = new MutationObserver(function (records) {{
+      for (var i = 0; i < records.length; i++) {{
+        var added = records[i].addedNodes;
+        for (var j = 0; j < added.length; j++) {{
+          var node = added[j];
+          // Ignore our own style element; react to page styles arriving.
+          if (node.nodeType !== 1 || node.id === STYLE_ID) {{ continue; }}
+          var tag = node.tagName;
+          if (tag === 'STYLE' || tag === 'LINK') {{
+            safeApply();
+            return;
+          }}
+        }}
+      }}
+    }});
+    obs.observe(document.documentElement, {{ childList: true, subtree: true }});
+    setTimeout(function () {{ obs.disconnect(); }}, 15000);
+  }} catch (e) {{ /* MutationObserver unavailable: the initial apply stands */ }}
+}})();
+"#,
+        payload = payload
+    ))
 }
 
 /// The bridge injected into the page: window.brix.invoke(method, args) -> Promise.
@@ -2327,6 +2666,12 @@ fn run(verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // Render the font override once and share it across every window.
+    let font_script = config.font.as_ref().and_then(build_font_script);
+    if font_script.is_some() {
+        verbose_log(verbose, &data_dir, "font: override active");
+    }
+
     let opts = std::sync::Arc::new(WindowOpts {
         entry_url: entry_url.clone(),
         entry_path: entry_path_str,
@@ -2345,6 +2690,7 @@ fn run(verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
         update_state,
         proxy: proxy.clone(),
         extension: extension_runtime,
+        font_script,
     });
 
     let webview = build_webview(&opts, &window, &mut web_context)?;
