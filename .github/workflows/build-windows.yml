@@ -34,17 +34,16 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Build stub
-        working-directory: src/stub
         run: cargo build --release --target x86_64-pc-windows-msvc
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: brix-stub-windows
-          path: src/stub/target/x86_64-pc-windows-msvc/release/stub.exe
+          path: target/x86_64-pc-windows-msvc/release/brix-stub.exe
           if-no-files-found: error
 
       - name: Show binary info
-        working-directory: src/stub/target/x86_64-pc-windows-msvc/release
+        working-directory: target/x86_64-pc-windows-msvc/release
         run: |
-          Get-Item stub.exe | Select-Object Name, Length, LastWriteTime
+          Get-Item brix-stub.exe | Select-Object Name, Length, LastWriteTime
