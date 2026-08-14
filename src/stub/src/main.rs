@@ -212,6 +212,8 @@ enum UserEvent {
     Tray(tray_icon::TrayIconEvent),
     TrayMenuClicked(String),
     UpdateEvent(serde_json::Value),
+    /// Backend port is ready (async wait completed).
+    BackendReady,
 }
 
 #[cfg(target_os = "windows")]
@@ -391,6 +393,22 @@ fn wait_for_port(addr: &str) {
         }
         std::thread::sleep(std::time::Duration::from_millis(300));
     }
+}
+
+/// Async port wait: spawns a thread to poll the address, sends BackendReady event when done.
+fn wait_for_port_async(addr: String, proxy: EventLoopProxy<UserEvent>) {
+    std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        while std::time::Instant::now() < deadline {
+            if std::net::TcpStream::connect(&addr).is_ok() {
+                let _ = proxy.send_event(UserEvent::BackendReady);
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(300));
+        }
+        // Timeout: still send event to unblock UI (will show error on navigate)
+        let _ = proxy.send_event(UserEvent::BackendReady);
+    });
 }
 
 /// FNV-1a 64-bit hash used to fingerprint the bundle for the extraction cache.
@@ -1969,45 +1987,34 @@ fn run(verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Native extension sidecar: forwards unknown window.brix.invoke methods
-    // to a user process over stdio (see ExtensionRuntime / handle_ipc).
-    let mut extension_runtime: Option<std::sync::Arc<ExtensionRuntime>> = None;
-    let mut _extension_child: Option<std::process::Child> = None;
+    // Prepare port resolution: determine which port to wait for, but defer
+    // actual waiting until after EventLoop creation so splash can show immediately.
     let resolved_port: Option<u16> = config.backend.as_ref().and_then(|b| b.port);
     let mut final_backend_port: Option<u16> = None;
-    let mut entry_url;
-    if let Some(port) = resolved_port {
-        let port = if port == 0 {
-            let port_file = temp_dir.join(".brix_port");
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
-            let mut actual: Option<u16> = None;
-            while std::time::Instant::now() < deadline {
-                if let Ok(content) = std::fs::read_to_string(&port_file) {
-                    if let Ok(p) = content.trim().parse::<u16>() {
-                        actual = Some(p);
-                        break;
-                    }
-                }
-                std::thread::sleep(std::time::Duration::from_millis(300));
-            }
-            let actual = actual.ok_or("backend did not report a port via BRIX_PORT_FILE")?;
-            verbose_log(verbose, &data_dir, &format!("mode: server at dynamic port {}", actual));
-            actual
+    let mut entry_url: String;
+    let port_wait_addr: Option<String> = if let Some(port) = resolved_port {
+        if port == 0 {
+            // Dynamic port: will read from .brix_port after EventLoop
+            None
         } else {
-            let addr = format!("127.0.0.1:{}", port);
-            wait_for_port(&addr);
-            verbose_log(verbose, &data_dir, &format!("mode: server at http://{}/", addr));
-            port
-        };
-        final_backend_port = Some(port);
-        entry_url = format!("http://127.0.0.1:{}/", port);
+            // Fixed port: prepare address string for async wait
+            Some(format!("127.0.0.1:{}", port))
+        }
     } else {
+        None
+    };
+
+    // For bundled mode (no backend), set entry_url immediately
+    if resolved_port.is_none() {
         verbose_log(
             verbose,
             &data_dir,
             &format!("mode: bundled at brix://app/{}", entry_path_str),
         );
         entry_url = format!("brix://app/{}", entry_path_str);
+    } else {
+        // Placeholder: will be set after port wait completes
+        entry_url = String::new();
     }
 
     // Dev mode: load an external dev-server URL instead of the bundle. The
@@ -2029,6 +2036,78 @@ fn run(verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
     let event_loop: EventLoop<UserEvent> =
         tao::event_loop::EventLoopBuilder::with_user_event().build();
     let proxy: EventLoopProxy<UserEvent> = event_loop.create_proxy();
+
+    // Start async port wait AFTER EventLoop creation (if backend mode with fixed port)
+    let mut extension_runtime: Option<std::sync::Arc<ExtensionRuntime>> = None;
+    let mut _extension_child: Option<std::process::Child> = None;
+    let backend_ready = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+    if let Some(addr) = port_wait_addr {
+        let proxy_for_wait = proxy.clone();
+        let ready_flag = backend_ready.clone();
+        let temp_dir_clone = temp_dir.clone();
+        let data_dir_clone = data_dir.clone();
+        let verbose_clone = verbose;
+        std::thread::spawn(move || {
+            // Fixed port: poll until connection succeeds
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+            while std::time::Instant::now() < deadline {
+                if std::net::TcpStream::connect(&addr).is_ok() {
+                    verbose_log(verbose_clone, &data_dir_clone, &format!("backend ready: http://{}/", addr));
+                    ready_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                    let _ = proxy_for_wait.send_event(UserEvent::BackendReady);
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(300));
+            }
+            verbose_log(verbose_clone, &data_dir_clone, "backend wait timed out");
+            let _ = proxy_for_wait.send_event(UserEvent::BackendReady);
+        });
+    } else if resolved_port == Some(0) {
+        // Dynamic port: read from .brix_port file, then wait
+        let proxy_for_wait = proxy.clone();
+        let ready_flag = backend_ready.clone();
+        let temp_dir_clone = temp_dir.clone();
+        let data_dir_clone = data_dir.clone();
+        let verbose_clone = verbose;
+        std::thread::spawn(move || {
+            let port_file = temp_dir_clone.join(".brix_port");
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+            let mut actual_port: Option<u16> = None;
+
+            // First, wait for port file to appear
+            while std::time::Instant::now() < deadline {
+                if let Ok(content) = std::fs::read_to_string(&port_file) {
+                    if let Ok(p) = content.trim().parse::<u16>() {
+                        actual_port = Some(p);
+                        break;
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(300));
+            }
+
+            if let Some(port) = actual_port {
+                // Then wait for port to be ready
+                let addr = format!("127.0.0.1:{}", port);
+                let sub_deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+                while std::time::Instant::now() < sub_deadline {
+                    if std::net::TcpStream::connect(&addr).is_ok() {
+                        verbose_log(verbose_clone, &data_dir_clone, &format!("backend ready: http://{}/", addr));
+                        ready_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                        let _ = proxy_for_wait.send_event(UserEvent::BackendReady);
+                        return;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(300));
+                }
+            }
+
+            verbose_log(verbose_clone, &data_dir_clone, "backend wait timed out (dynamic port)");
+            let _ = proxy_for_wait.send_event(UserEvent::BackendReady);
+        });
+    } else {
+        // No backend: mark ready immediately
+        backend_ready.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
 
     // Native extension sidecar: forwards unknown window.brix.invoke methods
     // to a user process over stdio (see ExtensionRuntime / handle_ipc).
@@ -2260,8 +2339,8 @@ fn run(verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let opts = std::sync::Arc::new(WindowOpts {
-        entry_url,
+    let mut opts = std::sync::Arc::new(WindowOpts {
+        entry_url: entry_url.clone(),
         entry_path: entry_path_str,
         name_index,
         bundle: std::sync::Arc::new(mapped_file),
@@ -2439,12 +2518,14 @@ fn run(verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
     let splash_auto_hide = splash_settings.auto_hide;
     let default_window_size = (config.window.width, config.window.height);
     let app_name_for_windows = config.name.clone();
-    let opts_for_loop = opts.clone();
+    let mut opts_for_loop = opts.clone();
     let opts_for_exit = opts.clone();
     let verbose_for_loop = verbose;
     let data_dir_for_loop = data_dir.clone();
+    let temp_dir_for_loop = temp_dir.clone();
     let mut web_context_for_loop = web_context;
     let mut pending_responses: HashMap<tao::window::WindowId, String> = HashMap::new();
+    let resolved_port_for_loop = resolved_port;
 
     let mut exit_app = move |control_flow: &mut ControlFlow| {
         if let Some(mut child) = _backend_child.take() {
@@ -2620,6 +2701,38 @@ fn run(verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
                 } else if let Some((win, wv)) = extra_windows.remove(&wid) {
                     drop(wv);
                     drop(win);
+                }
+            }
+            Event::UserEvent(UserEvent::BackendReady) => {
+                // Backend is now ready (or timed out). Update entry_url and navigate main window.
+                if let Some(port) = resolved_port_for_loop {
+                    let actual_port = if port == 0 {
+                        // Dynamic port: read from .brix_port
+                        let port_file = temp_dir_for_loop.join(".brix_port");
+                        if let Ok(content) = std::fs::read_to_string(&port_file) {
+                            content.trim().parse::<u16>().ok()
+                        } else {
+                            None
+                        }
+                    } else {
+                        Some(port)
+                    };
+
+                    if let Some(p) = actual_port {
+                        let new_entry_url = format!("http://127.0.0.1:{}/", p);
+
+                        // Update opts entry_url for future windows
+                        if let Some(opts_mut) = std::sync::Arc::get_mut(&mut opts_for_loop) {
+                            opts_mut.entry_url = new_entry_url.clone();
+                            opts_mut.final_backend_port = Some(p);
+                        }
+
+                        // Navigate main window to backend URL
+                        let _ = webview_for_loop.load_url(&new_entry_url);
+                        verbose_log(verbose_for_loop, &data_dir_for_loop, &format!("nav: {} external=false", new_entry_url));
+                    } else {
+                        verbose_log(verbose_for_loop, &data_dir_for_loop, "backend: port not available, keeping splash");
+                    }
                 }
             }
             Event::UserEvent(UserEvent::PageLoaded(wid)) => {
