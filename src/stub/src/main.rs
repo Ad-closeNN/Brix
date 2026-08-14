@@ -385,6 +385,8 @@ fn sanitize_folder_name(name: &str) -> String {
 }
 
 /// Polls a TCP address until it accepts connections (server-mode startup wait).
+/// Synchronous port wait: blocks until the address is reachable (legacy, unused).
+#[allow(dead_code)]
 fn wait_for_port(addr: &str) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
     while std::time::Instant::now() < deadline {
@@ -395,7 +397,8 @@ fn wait_for_port(addr: &str) {
     }
 }
 
-/// Async port wait: spawns a thread to poll the address, sends BackendReady event when done.
+/// Async port wait: spawns a thread to poll the address, sends BackendReady event when done (legacy, unused).
+#[allow(dead_code)]
 fn wait_for_port_async(addr: String, proxy: EventLoopProxy<UserEvent>) {
     std::thread::spawn(move || {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
@@ -2045,7 +2048,6 @@ fn run(verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(addr) = port_wait_addr {
         let proxy_for_wait = proxy.clone();
         let ready_flag = backend_ready.clone();
-        let temp_dir_clone = temp_dir.clone();
         let data_dir_clone = data_dir.clone();
         let verbose_clone = verbose;
         std::thread::spawn(move || {
@@ -2339,7 +2341,7 @@ fn run(verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let mut opts = std::sync::Arc::new(WindowOpts {
+    let opts = std::sync::Arc::new(WindowOpts {
         entry_url: entry_url.clone(),
         entry_path: entry_path_str,
         name_index,
