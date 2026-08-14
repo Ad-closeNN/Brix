@@ -1,0 +1,50 @@
+name: Build Windows Stub
+
+on:
+  push:
+    branches: [main, feat/async-port-wait]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            src/stub/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build stub
+        working-directory: src/stub
+        run: cargo build --release --target x86_64-pc-windows-msvc
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: brix-stub-windows
+          path: src/stub/target/x86_64-pc-windows-msvc/release/stub.exe
+          if-no-files-found: error
+
+      - name: Show binary info
+        working-directory: src/stub/target/x86_64-pc-windows-msvc/release
+        run: |
+          Get-Item stub.exe | Select-Object Name, Length, LastWriteTime
