@@ -2025,6 +2025,10 @@ fn run(verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
     let mut _extension_child: Option<std::process::Child> = None;
     let backend_ready = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
+    // Backends can be slow to boot (dependency install, JIT warmup, plugin
+    // loading), so allow a generous window before giving up.
+    const BACKEND_WAIT_SECS: u64 = 120;
+
     if let Some(addr) = port_wait_addr {
         let proxy_for_wait = proxy.clone();
         let ready_flag = backend_ready.clone();
@@ -2032,7 +2036,8 @@ fn run(verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
         let verbose_clone = verbose;
         std::thread::spawn(move || {
             // Fixed port: poll until connection succeeds
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+            let deadline =
+                std::time::Instant::now() + std::time::Duration::from_secs(BACKEND_WAIT_SECS);
             while std::time::Instant::now() < deadline {
                 if std::net::TcpStream::connect(&addr).is_ok() {
                     verbose_log(verbose_clone, &data_dir_clone, &format!("backend ready: http://{}/", addr));
@@ -2054,7 +2059,8 @@ fn run(verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
         let verbose_clone = verbose;
         std::thread::spawn(move || {
             let port_file = temp_dir_clone.join(".brix_port");
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+            let deadline =
+                std::time::Instant::now() + std::time::Duration::from_secs(BACKEND_WAIT_SECS);
             let mut actual_port: Option<u16> = None;
 
             // First, wait for port file to appear
@@ -2069,10 +2075,10 @@ fn run(verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
             }
 
             if let Some(port) = actual_port {
-                // Then wait for port to be ready
+                // Then wait for the port to accept connections. Reuse the remaining
+                // budget so a slow port-file write doesn't eat the connect window.
                 let addr = format!("127.0.0.1:{}", port);
-                let sub_deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-                while std::time::Instant::now() < sub_deadline {
+                while std::time::Instant::now() < deadline {
                     if std::net::TcpStream::connect(&addr).is_ok() {
                         verbose_log(verbose_clone, &data_dir_clone, &format!("backend ready: http://{}/", addr));
                         ready_flag.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -2508,6 +2514,7 @@ fn run(verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
     let mut web_context_for_loop = web_context;
     let mut pending_responses: HashMap<tao::window::WindowId, String> = HashMap::new();
     let resolved_port_for_loop = resolved_port;
+    let mut navigated_to_backend = false;
 
     let mut exit_app = move |control_flow: &mut ControlFlow| {
         if let Some(mut child) = _backend_child.take() {
@@ -2685,8 +2692,11 @@ fn run(verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
                     drop(win);
                 }
             }
-            Event::UserEvent(UserEvent::BackendReady) => {
-                // Backend is now ready (or timed out). Update entry_url and navigate main window.
+            Event::UserEvent(UserEvent::BackendReady) if !navigated_to_backend => {
+                // Backend is now ready (or timed out). Swap the loading page for the
+                // real app. Guarded so a duplicate event can't re-navigate and wipe
+                // out in-page state the user has already interacted with.
+                navigated_to_backend = true;
                 if let Some(port) = resolved_port_for_loop {
                     let actual_port = if port == 0 {
                         // Dynamic port: read from .brix_port
@@ -2713,7 +2723,7 @@ fn run(verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
                         // evaluate_script with location.href is the reliable cross-platform path.
                         let js = format!("window.location.href = {:?};", new_entry_url);
                         let _ = webview_for_loop.evaluate_script(&js);
-                        verbose_log(verbose_for_loop, &data_dir_for_loop, &format!("nav: {} external=false", new_entry_url));
+                        verbose_log(verbose_for_loop, &data_dir_for_loop, &format!("backend handoff: loading page -> {}", new_entry_url));
                     } else {
                         verbose_log(verbose_for_loop, &data_dir_for_loop, "backend: port not available, keeping splash");
                     }
